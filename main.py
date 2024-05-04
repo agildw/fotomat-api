@@ -1,10 +1,11 @@
 from typing import Union
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile,HTTPException
 from fastapi.responses import  StreamingResponse
 import cv2
 import numpy as np
 from io import BytesIO
 from fastapi.middleware.cors import CORSMiddleware
+import fourier
 
 app = FastAPI()
 
@@ -20,17 +21,38 @@ app.add_middleware(
 
 
 @app.post("/")
-async def read_image_matrix(file: UploadFile = File(...)):
+
+async def image_matrix(file: UploadFile = File(...)):
+    """
+    Read the matrix representation of an uploaded image.
+
+    Parameters:
+    - file: UploadFile object representing the uploaded image file.
+
+    Returns:
+    - dict: Dictionary containing the shape and matrix representation of the image.
+
+    Raises:
+    - HTTPException: If the uploaded file is not an image or an error occurs during processing.
+    """
+    
     # if image mimetype is not image
     if file.content_type.split('/')[0] != 'image':
         return {"Error": "Invalid file type"}
     
-    # read image
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # Check if the uploaded file is an image
+    try:
+        # Read image file into memory
+        image_stream = await file.read()
+        image_array = np.fromstring(image_stream, np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
-    return {"image": image.shape}
+        # Convert the image matrix to a string
+        image_matrix_str = str(image)
+
+        return {"shape": image.shape, "matrix": image_matrix_str}
+    except Exception as e:
+        return {"Error": str(e)}
     
 
 @app.post("/red")
@@ -210,9 +232,93 @@ async def compress_image(file: UploadFile = File(...), quality: int = 90):
         image_array = np.fromstring(image_stream, np.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
+        
+        print(quality)
+
         # Compress the image with the specified quality level
-        _, encoded_image = cv2.imencode('.png', image, [cv2.IMWRITE_PNG_COMPRESSION, quality])
+        _, encoded_image = cv2.imencode('.png', image, [cv2.IMWRITE_PNG_COMPRESSION, int(quality)])
+
+        # print image size
+        print("Original image size: ", image.size)
+        print("Compressed image size: ", encoded_image.size)
+
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
         return {"Error": str(e)}
+    
+@app.post('/sharpen')
+async def sharpen_image(file: UploadFile = File(...)):
+    """
+    Process an uploaded image and apply a sharpening filter.
+
+    Parameters:
+    - file: UploadFile object representing the uploaded image file.
+
+    Returns:
+    - StreamingResponse: Response containing the sharpened image in PNG format.
+
+    Raises:
+    - HTTPException: If the uploaded file is not an image or an error occurs during processing.
+    """
+    
+    # if image mimetype is not image
+    if file.content_type.split('/')[0] != 'image':
+        return {"Error": "Invalid file type"}
+    
+    # Check if the uploaded file is an image
+    try:
+        # Read image file into memory
+        image_stream = await file.read()
+        image_array = np.fromstring(image_stream, np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+        # Apply a sharpening filter to the image
+        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        sharpened_image = cv2.filter2D(image, -1, kernel)
+
+        # Encode the processed image to send it back
+        _, encoded_image = cv2.imencode('.png', sharpened_image)
+        encoded_image_bytes = encoded_image.tobytes()
+        return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        # return {"Error": str(e)}
+    
+@app.post('/fourier')
+async def fourier_transform(file: UploadFile = File(...)):
+    """
+    Process an uploaded image and apply a Fourier transform.
+
+    Parameters:
+    - file: UploadFile object representing the uploaded image file.
+
+    Returns:
+    - StreamingResponse: Response containing the Fourier transformed image in PNG format.
+
+    Raises:
+    - HTTPException: If the uploaded file is not an image or an error occurs during processing.
+    """
+    
+    # if image mimetype is not image
+    if file.content_type.split('/')[0] != 'image':
+        return {"Error": "Invalid file type"}
+    
+    # Check if the uploaded file is an image
+    try:
+        # Read image file into memory
+        image_stream = await file.read()
+        image_array = np.fromstring(image_stream, np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
+
+        x_list, y_list = fourier.load_and_process_image(image)
+        xlim, ylim = (min(x_list), max(x_list)), (min(y_list), max(y_list))
+        coefficients = fourier.compute_fourier_coefficients(x_list, y_list)
+        video_data = fourier.animate_epicycle(x_list, y_list, coefficients, xlim, ylim)
+
+        return StreamingResponse(BytesIO(video_data), media_type="video/mp4")    
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    
