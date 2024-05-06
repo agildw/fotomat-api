@@ -5,7 +5,8 @@ import cv2
 import numpy as np
 from io import BytesIO
 from fastapi.middleware.cors import CORSMiddleware
-import fourier
+import cmapy
+
 
 app = FastAPI()
 
@@ -52,7 +53,8 @@ async def image_matrix(file: UploadFile = File(...)):
 
         return {"shape": image.shape, "matrix": image_matrix_str}
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 
 @app.post("/red")
@@ -91,7 +93,8 @@ async def red_image(file: UploadFile = File(...)):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @app.post('/blue')
 async def blue_image(file: UploadFile = File(...)):
@@ -129,7 +132,8 @@ async def blue_image(file: UploadFile = File(...)):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @app.post('/green')
 async def green_image(file: UploadFile = File(...)):
@@ -167,7 +171,8 @@ async def green_image(file: UploadFile = File(...)):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @app.post('/gray')
 async def gray_image(file: UploadFile = File(...)):
@@ -203,7 +208,8 @@ async def gray_image(file: UploadFile = File(...)):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @app.post('/compress')
 async def compress_image(file: UploadFile = File(...), quality: int = 90):
@@ -245,7 +251,8 @@ async def compress_image(file: UploadFile = File(...), quality: int = 90):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
-        return {"Error": str(e)}
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
     
 @app.post('/sharpen')
 async def sharpen_image(file: UploadFile = File(...)):
@@ -282,6 +289,7 @@ async def sharpen_image(file: UploadFile = File(...)):
         encoded_image_bytes = encoded_image.tobytes()
         return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))
         # return {"Error": str(e)}
     
@@ -292,7 +300,7 @@ async def fourier_transform(file: UploadFile = File(...)):
 
     Parameters:
     - file: UploadFile object representing the uploaded image file.
-
+    
     Returns:
     - StreamingResponse: Response containing the Fourier transformed image in PNG format.
 
@@ -300,23 +308,50 @@ async def fourier_transform(file: UploadFile = File(...)):
     - HTTPException: If the uploaded file is not an image or an error occurs during processing.
     """
     
+    
     # if image mimetype is not image
     if file.content_type.split('/')[0] != 'image':
         return {"Error": "Invalid file type"}
     
-    # Check if the uploaded file is an image
+    
     try:
-        # Read image file into memory
+       
         image_stream = await file.read()
         image_array = np.fromstring(image_stream, np.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
+        # image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        x_list, y_list = fourier.load_and_process_image(image)
-        xlim, ylim = (min(x_list), max(x_list)), (min(y_list), max(y_list))
-        coefficients = fourier.compute_fourier_coefficients(x_list, y_list)
-        video_data = fourier.animate_epicycle(x_list, y_list, coefficients, xlim, ylim)
 
-        return StreamingResponse(BytesIO(video_data), media_type="video/mp4")    
+        # calculating the discrete Fourier transform
+        DFT = cv2.dft(np.float32(image), flags=cv2.DFT_COMPLEX_OUTPUT)
+        
+        # reposition the zero-frequency component to the spectrum's middle
+        shift = np.fft.fftshift(DFT)
+        row, col = image.shape
+        center_row, center_col = row // 2, col // 2
+        
+        # create a mask with a centered square of 1s
+        mask = np.zeros((row, col, 2), np.uint8)
+        mask[center_row - 30:center_row + 30, center_col - 30:center_col + 30] = 1
+        
+        # put the mask and inverse DFT in place.
+        fft_shift = shift * mask
+        fft_ifft_shift = np.fft.ifftshift(fft_shift)
+        imageThen = cv2.idft(fft_ifft_shift)
+        
+        # calculate the magnitude of the inverse DFT
+        imageThen = cv2.magnitude(imageThen[:,:,0], imageThen[:,:,1])
+
+        # normalize the magnitude for display
+        
+        imageThen = cv2.normalize(imageThen, None, 0, 255, cv2.NORM_MINMAX)
+        imageThen = imageThen.astype(np.uint8)
+
+        _, encoded_image = cv2.imencode('.png', imageThen)
+        encoded_image_bytes = encoded_image.tobytes()
+        return StreamingResponse(BytesIO(encoded_image_bytes), media_type="image/png")
+
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
